@@ -1,7 +1,4 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, doc, updateDoc, deleteDoc, onSnapshot, addDoc } from 'firebase/firestore';
 import {
   Book, BookOpen, Library, Settings as SettingsIcon, LogOut, Search, Plus, Trash2,
   Camera, PieChart as PieChartIcon, BarChart3, Menu, X,
@@ -23,9 +20,6 @@ const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__f
   measurementId: "G-G8B18SJWE5"
 };
 
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'book-app-default';
 
 // --- Contexts ---
@@ -623,6 +617,7 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
 
 // --- Main Application ---
 export default function App() {
+  const [fb, setFb] = useState(null); // 動態載入的 Firebase 實體
   const [user, setUser] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
   const [isLoggedIn, setIsLoggedIn] = useState(false); // Local App Password state
@@ -652,34 +647,50 @@ export default function App() {
     };
     checkLocalAuth();
 
+    let unsubscribe = () => {};
+
     const initFirebase = async () => {
       try {
+        // 使用 new Function 繞過 Vite/Rolldown 嚴格的靜態依賴檢查，改為瀏覽器執行時動態載入 CDN
+        const appModule = await new Function(`return import("https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js")`)();
+        const authModule = await new Function(`return import("https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js")`)();
+        const fsModule = await new Function(`return import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js")`)();
+
+        const app = appModule.initializeApp(firebaseConfig);
+        const auth = authModule.getAuth(app);
+        const db = fsModule.getFirestore(app);
+        
+        setFb({ app, auth, db, fsModule });
+
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-           await signInWithCustomToken(auth, __initial_auth_token);
+           await authModule.signInWithCustomToken(auth, __initial_auth_token);
         } else {
-           await signInAnonymously(auth);
+           await authModule.signInAnonymously(auth);
         }
+        
+        unsubscribe = authModule.onAuthStateChanged(auth, (currentUser) => {
+          setUser(currentUser);
+          setIsAuthLoading(false);
+        });
       } catch (err) {
-        console.error("Firebase Auth Error:", err);
+        console.error("Firebase Init Error:", err);
+        setIsAuthLoading(false); // 若無網路或載入失敗則 fallback，避免畫面卡死
       }
     };
     initFirebase();
 
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthLoading(false);
-    });
     return () => unsubscribe();
   }, []);
 
   // Fetch Data
   useEffect(() => {
-    if (!user || !isLoggedIn) return;
+    if (!user || !isLoggedIn || !fb) return;
     
     setIsDataLoading(true);
-    const booksRef = collection(db, getCollectionPath(user.uid, 'books'));
+    const { db, fsModule } = fb;
+    const booksRef = fsModule.collection(db, getCollectionPath(user.uid, 'books'));
     
-    const unsubscribeBooks = onSnapshot(booksRef, (snapshot) => {
+    const unsubscribeBooks = fsModule.onSnapshot(booksRef, (snapshot) => {
       const booksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setBooks(booksData);
       setIsDataLoading(false);
@@ -691,7 +702,7 @@ export default function App() {
     return () => {
       unsubscribeBooks();
     };
-  }, [user, isLoggedIn]);
+  }, [user, isLoggedIn, fb]);
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -718,12 +729,13 @@ export default function App() {
 
   // CRUD Operations
   const handleSaveBook = async (bookData) => {
-    if (!user) return;
+    if (!user || !fb) return;
+    const { db, fsModule } = fb;
     try {
       if (editingBook) {
         // Update
-        const bookRef = doc(db, getCollectionPath(user.uid, 'books'), editingBook.id);
-        await updateDoc(bookRef, bookData);
+        const bookRef = fsModule.doc(db, getCollectionPath(user.uid, 'books'), editingBook.id);
+        await fsModule.updateDoc(bookRef, bookData);
       } else {
         // Create
         // Duplicate check
@@ -735,8 +747,8 @@ export default function App() {
            if (!window.confirm("警告：似乎已有相同 ISBN 或書名的書籍，確定要新增嗎？")) return;
         }
         
-        const booksCol = collection(db, getCollectionPath(user.uid, 'books'));
-        await addDoc(booksCol, bookData);
+        const booksCol = fsModule.collection(db, getCollectionPath(user.uid, 'books'));
+        await fsModule.addDoc(booksCol, bookData);
       }
       setIsBookModalOpen(false);
       setEditingBook(null);
@@ -747,9 +759,10 @@ export default function App() {
   };
 
   const handleDeleteBook = async () => {
-    if (!user || !deleteConfirm) return;
+    if (!user || !deleteConfirm || !fb) return;
+    const { db, fsModule } = fb;
     try {
-      await deleteDoc(doc(db, getCollectionPath(user.uid, 'books'), deleteConfirm.id));
+      await fsModule.deleteDoc(fsModule.doc(db, getCollectionPath(user.uid, 'books'), deleteConfirm.id));
       setDeleteConfirm(null);
     } catch (err) {
       console.error("Delete error", err);
