@@ -11,6 +11,20 @@ import {
 
 // --- 動態載入 Tailwind CSS 與字型 (解決沒有 CSS 檔案的問題) ---
 if (typeof document !== 'undefined') {
+  // 1. 先設定 Tailwind Config，避免 race condition
+  window.tailwind = window.tailwind || {};
+  window.tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: {
+          serif: ['"Noto Serif TC"', 'serif'],
+        }
+      }
+    }
+  };
+
+  // 2. 載入字型
   if (!document.getElementById('google-fonts')) {
     const fontLink = document.createElement('link');
     fontLink.id = 'google-fonts';
@@ -19,26 +33,12 @@ if (typeof document !== 'undefined') {
     document.head.appendChild(fontLink);
   }
   
+  // 3. 載入 Tailwind 核心程式
   if (!document.getElementById('tailwind-cdn')) {
     const tailwindScript = document.createElement('script');
     tailwindScript.id = 'tailwind-cdn';
     tailwindScript.src = 'https://cdn.tailwindcss.com';
     document.head.appendChild(tailwindScript);
-
-    const configScript = document.createElement('script');
-    configScript.innerHTML = `
-      tailwind.config = {
-        darkMode: 'class',
-        theme: {
-          extend: {
-            fontFamily: {
-              serif: ['"Noto Serif TC"', 'serif'],
-            }
-          }
-        }
-      }
-    `;
-    document.head.appendChild(configScript);
   }
 }
 
