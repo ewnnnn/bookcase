@@ -651,24 +651,22 @@ export default function App() {
 
     const initFirebase = async () => {
       try {
-        // 使用 new Function 繞過 Vite/Rolldown 嚴格的靜態依賴檢查，改為瀏覽器執行時動態載入 CDN
-        const appModule = await new Function(`return import("https://www.gstatic.com/firebasejs/10.8.1/firebase-app.js")`)();
-        const authModule = await new Function(`return import("https://www.gstatic.com/firebasejs/10.8.1/firebase-auth.js")`)();
-        const fsModule = await new Function(`return import("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore.js")`)();
-
-        const app = appModule.initializeApp(firebaseConfig);
-        const auth = authModule.getAuth(app);
-        const db = fsModule.getFirestore(app);
+        if (!window.firebase.apps.length) {
+          window.firebase.initializeApp(firebaseConfig);
+        }
+        const app = window.firebase.app();
+        const auth = window.firebase.auth();
+        const db = window.firebase.firestore();
         
-        setFb({ app, auth, db, fsModule });
+        setFb({ app, auth, db });
 
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-           await authModule.signInWithCustomToken(auth, __initial_auth_token);
+           await auth.signInWithCustomToken(__initial_auth_token);
         } else {
-           await authModule.signInAnonymously(auth);
+           await auth.signInAnonymously();
         }
         
-        unsubscribe = authModule.onAuthStateChanged(auth, (currentUser) => {
+        unsubscribe = auth.onAuthStateChanged((currentUser) => {
           setUser(currentUser);
           setIsAuthLoading(false);
         });
@@ -677,7 +675,30 @@ export default function App() {
         setIsAuthLoading(false); // 若無網路或載入失敗則 fallback，避免畫面卡死
       }
     };
-    initFirebase();
+
+    if (window.firebase) {
+      initFirebase();
+    } else {
+      // 透過插入 HTML Script 標籤的方式動態載入相容版 Firebase，徹底避開所有 Vite 編譯限制
+      const loadScript = (src) => new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = src;
+        script.onload = resolve;
+        script.onerror = reject;
+        document.head.appendChild(script);
+      });
+
+      Promise.all([
+        loadScript("https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"),
+        loadScript("https://www.gstatic.com/firebasejs/10.8.1/firebase-auth-compat.js"),
+        loadScript("https://www.gstatic.com/firebasejs/10.8.1/firebase-firestore-compat.js")
+      ]).then(() => {
+        initFirebase();
+      }).catch(err => {
+         console.error("Failed to load Firebase scripts", err);
+         setIsAuthLoading(false);
+      });
+    }
 
     return () => unsubscribe();
   }, []);
@@ -687,10 +708,10 @@ export default function App() {
     if (!user || !isLoggedIn || !fb) return;
     
     setIsDataLoading(true);
-    const { db, fsModule } = fb;
-    const booksRef = fsModule.collection(db, getCollectionPath(user.uid, 'books'));
+    const { db } = fb;
+    const booksRef = db.collection(getCollectionPath(user.uid, 'books'));
     
-    const unsubscribeBooks = fsModule.onSnapshot(booksRef, (snapshot) => {
+    const unsubscribeBooks = booksRef.onSnapshot((snapshot) => {
       const booksData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       setBooks(booksData);
       setIsDataLoading(false);
@@ -730,12 +751,12 @@ export default function App() {
   // CRUD Operations
   const handleSaveBook = async (bookData) => {
     if (!user || !fb) return;
-    const { db, fsModule } = fb;
+    const { db } = fb;
     try {
       if (editingBook) {
         // Update
-        const bookRef = fsModule.doc(db, getCollectionPath(user.uid, 'books'), editingBook.id);
-        await fsModule.updateDoc(bookRef, bookData);
+        const bookRef = db.collection(getCollectionPath(user.uid, 'books')).doc(editingBook.id);
+        await bookRef.update(bookData);
       } else {
         // Create
         // Duplicate check
@@ -747,8 +768,8 @@ export default function App() {
            if (!window.confirm("警告：似乎已有相同 ISBN 或書名的書籍，確定要新增嗎？")) return;
         }
         
-        const booksCol = fsModule.collection(db, getCollectionPath(user.uid, 'books'));
-        await fsModule.addDoc(booksCol, bookData);
+        const booksCol = db.collection(getCollectionPath(user.uid, 'books'));
+        await booksCol.add(bookData);
       }
       setIsBookModalOpen(false);
       setEditingBook(null);
@@ -760,9 +781,9 @@ export default function App() {
 
   const handleDeleteBook = async () => {
     if (!user || !deleteConfirm || !fb) return;
-    const { db, fsModule } = fb;
+    const { db } = fb;
     try {
-      await fsModule.deleteDoc(fsModule.doc(db, getCollectionPath(user.uid, 'books'), deleteConfirm.id));
+      await db.collection(getCollectionPath(user.uid, 'books')).doc(deleteConfirm.id).delete();
       setDeleteConfirm(null);
     } catch (err) {
       console.error("Delete error", err);
