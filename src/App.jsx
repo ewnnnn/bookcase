@@ -1,16 +1,15 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback, createContext, useContext } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, getDoc, updateDoc, deleteDoc, onSnapshot, query, addDoc } from 'firebase/firestore';
+import { getFirestore, collection, doc, updateDoc, deleteDoc, onSnapshot, addDoc } from 'firebase/firestore';
 import {
-  Book, BookOpen, Library, Settings as SettingsIcon, LogOut, Search, Plus, Edit2, Trash2,
-  Camera, Calendar, PieChart as PieChartIcon, BarChart3, Menu, X,
+  Book, BookOpen, Library, Settings as SettingsIcon, LogOut, Search, Plus, Trash2,
+  Camera, PieChart as PieChartIcon, BarChart3, Menu, X,
   CheckCircle, AlertCircle, TrendingUp, DollarSign, Image as ImageIcon,
   Moon, Sun, QrCode, XCircle
 } from 'lucide-react';
 import {
-  LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
 // --- Configuration ---
