@@ -9,6 +9,39 @@ import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
+// --- 動態載入 Tailwind CSS 與字型 (解決沒有 CSS 檔案的問題) ---
+if (typeof document !== 'undefined') {
+  if (!document.getElementById('google-fonts')) {
+    const fontLink = document.createElement('link');
+    fontLink.id = 'google-fonts';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@400;700;900&display=swap';
+    fontLink.rel = 'stylesheet';
+    document.head.appendChild(fontLink);
+  }
+  
+  if (!document.getElementById('tailwind-cdn')) {
+    const tailwindScript = document.createElement('script');
+    tailwindScript.id = 'tailwind-cdn';
+    tailwindScript.src = 'https://cdn.tailwindcss.com';
+    document.head.appendChild(tailwindScript);
+
+    const configScript = document.createElement('script');
+    configScript.innerHTML = `
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              serif: ['"Noto Serif TC"', 'serif'],
+            }
+          }
+        }
+      }
+    `;
+    document.head.appendChild(configScript);
+  }
+}
+
 // --- Configuration ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
   apiKey: "AIzaSyBh9Um8hFFQ0vSimvmdpc7wY5aAbYDGUDU",
@@ -24,7 +57,6 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'book-app-default';
 
 // --- Contexts ---
 const ToastContext = createContext(null);
-const ThemeContext = createContext(null);
 
 // --- Custom Hooks & Providers ---
 const ToastProvider = ({ children }) => {
@@ -54,12 +86,6 @@ const ToastProvider = ({ children }) => {
 const useToast = () => useContext(ToastContext);
 
 // --- Utilities ---
-const formatDate = (dateString) => {
-  if (!dateString) return '';
-  const d = new Date(dateString);
-  return new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
-};
-
 const getCollectionPath = (userId, collectionName) => `artifacts/${appId}/users/${userId}/${collectionName}`;
 
 // --- UI Components ---
@@ -138,7 +164,6 @@ const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-2xl" }) => 
 
 // --- Features ---
 
-// 1. Scanner Component
 const ISBNScanner = ({ onScanSuccess, onClose }) => {
   const videoRef = useRef(null);
   const [error, setError] = useState(null);
@@ -156,7 +181,6 @@ const ISBNScanner = ({ onScanSuccess, onClose }) => {
           videoRef.current.srcObject = stream;
         }
 
-        // Check for native BarcodeDetector API (Chrome/Android)
         if ('BarcodeDetector' in window) {
           detector = new window.BarcodeDetector({ formats: ['ean_13', 'ean_8'] });
           const detectLoop = async () => {
@@ -165,11 +189,10 @@ const ISBNScanner = ({ onScanSuccess, onClose }) => {
               const barcodes = await detector.detect(videoRef.current);
               if (barcodes.length > 0) {
                 const isbn = barcodes[0].rawValue;
-                // Basic ISBN validation (starts with 978/979 or 10 digits)
                 if (isbn.length >= 10) {
                   setIsScanning(false);
                   onScanSuccess(isbn);
-                  return; // Stop loop
+                  return;
                 }
               }
             } catch (e) {
@@ -177,7 +200,6 @@ const ISBNScanner = ({ onScanSuccess, onClose }) => {
             }
             animationFrameId = requestAnimationFrame(detectLoop);
           };
-          // Start detection after video is ready
           videoRef.current.onloadedmetadata = () => {
             videoRef.current.play();
             detectLoop();
@@ -223,8 +245,7 @@ const ISBNScanner = ({ onScanSuccess, onClose }) => {
   );
 };
 
-// 2. Book Form Component
-const BookForm = ({ initialData, onSave, onCancel, userId }) => {
+const BookForm = ({ initialData, onSave, onCancel }) => {
   const showToast = useToast();
   const [formData, setFormData] = useState(initialData || {
     title: '', author: '', isbn: '', category: '', location: '',
@@ -299,7 +320,6 @@ const BookForm = ({ initialData, onSave, onCancel, userId }) => {
 
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-6">
-      {/* Cover Preview & Scanner Section */}
       <div className="flex flex-col md:flex-row gap-6 items-start">
         <div className="w-full md:w-1/3 flex flex-col gap-4">
           <div className="aspect-[2/3] w-full bg-[#f4ebd8] dark:bg-[#1e150e] rounded-sm flex items-center justify-center overflow-hidden border-2 border-dashed border-[#c8b89e] dark:border-[#4a3525] shadow-inner group relative">
@@ -346,7 +366,6 @@ const BookForm = ({ initialData, onSave, onCancel, userId }) => {
           )}
         </div>
 
-        {/* Form Fields */}
         <div className="w-full md:w-2/3 grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="md:col-span-2">
             <Input label="書名 *" name="title" value={formData.title} onChange={handleChange} error={errors.title} placeholder="請輸入書名" />
@@ -404,9 +423,8 @@ const BookForm = ({ initialData, onSave, onCancel, userId }) => {
   );
 };
 
-// 3. Views
 const DashboardView = ({ books }) => {
-  const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const currentMonth = new Date().toISOString().slice(0, 7);
   
   const stats = useMemo(() => {
     let monthlyAdded = 0;
@@ -422,7 +440,7 @@ const DashboardView = ({ books }) => {
         monthlyAdded++;
         monthlySpent += Number(b.price) || 0;
       }
-      if (b.status === 'finished' && b.updatedAt?.slice(0, 7) === currentMonth) { // Simplified finish date assumption
+      if (b.status === 'finished' && b.updatedAt?.slice(0, 7) === currentMonth) {
          monthlyFinished++;
       }
       totalSpent += Number(b.price) || 0;
@@ -437,7 +455,6 @@ const DashboardView = ({ books }) => {
     };
   }, [books, currentMonth]);
 
-  // Chart Data preparation
   const categoryData = useMemo(() => {
     const counts = {};
     books.forEach(b => {
@@ -522,10 +539,10 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
   }, [books, searchTerm, statusFilter]);
 
   const statusColors = {
-    unread: 'bg-[#b38b4d]', // Gold
-    reading: 'bg-[#4a5e42]', // Forest
-    finished: 'bg-[#7a2e2e]', // Burgundy
-    wishlist: 'bg-[#3d4c53]' // Slate Blue
+    unread: 'bg-[#b38b4d]', 
+    reading: 'bg-[#4a5e42]', 
+    finished: 'bg-[#7a2e2e]', 
+    wishlist: 'bg-[#3d4c53]' 
   };
 
   return (
@@ -569,13 +586,11 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-6 gap-y-32 pb-40 pt-12 mt-4 relative z-10">
             {filteredBooks.map(book => (
               <div key={book.id} className="relative flex flex-col items-center group cursor-pointer" onClick={() => onEdit(book)}>
-                {/* Shelf Plank */}
                 <div className="absolute bottom-0 w-[130%] h-5 bg-gradient-to-b from-[#905e32] to-[#5c3a21] shadow-[0_15px_15px_-3px_rgba(0,0,0,0.6)] border-t border-[#c28c5a] border-b-[3px] border-[#3e2723] z-0 translate-y-full rounded-sm flex justify-between px-3">
                    <div className="w-1.5 h-1.5 rounded-full bg-[#2a1a11] mt-1 shadow-sm"></div>
                    <div className="w-1.5 h-1.5 rounded-full bg-[#2a1a11] mt-1 shadow-sm"></div>
                 </div>
 
-                {/* Book Spine / Cover */}
                 <div className="z-10 relative w-24 h-36 sm:w-28 sm:h-44 shadow-[8px_0_15px_rgba(0,0,0,0.5)] transition-all duration-500 group-hover:-translate-y-4 group-hover:rotate-2 group-hover:shadow-[12px_15px_20px_rgba(0,0,0,0.4)] bg-gradient-to-r from-[#3e2723] to-[#5c3a21] rounded-r-md rounded-l-sm border-l-[3px] border-white/20 flex items-center justify-center overflow-hidden">
                   {book.coverUrl ? (
                     <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
@@ -585,17 +600,14 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
                       <h4 className="font-serif text-[#f4ebd8] text-[10px] sm:text-xs font-bold tracking-widest line-clamp-4 leading-loose z-10 drop-shadow-md" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>{book.title}</h4>
                     </div>
                   )}
-                  {/* Status Bookmark Ribbon */}
                   <div className={`absolute -top-0.5 right-2 w-3.5 h-6 ${statusColors[book.status]} shadow-md border border-black/30 z-20`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%)' }}></div>
                 </div>
 
-                {/* Label hanging below the shelf */}
                 <div className="absolute top-[calc(100%+28px)] z-20 w-[95%] bg-[#fdfbf7] dark:bg-[#2c1f16] border border-[#d2c3a5] dark:border-[#543d2d] p-1.5 text-center shadow-lg flex flex-col items-center gap-0.5 group-hover:bg-[#fff] dark:group-hover:bg-[#382619] transition-colors rounded-sm">
                     <div className="w-1.5 h-1.5 rounded-full bg-[#3e2723] absolute -top-1 shadow-inner border border-[#1a120c]"></div>
                     <h3 className="font-serif font-bold text-[#4a2e16] dark:text-[#d2c3a5] text-[11px] line-clamp-1 w-full mt-0.5" title={book.title}>{book.title}</h3>
                     <p className="text-[9px] text-[#7a5a41] dark:text-[#a89078] truncate w-full">{book.author || '未知作者'}</p>
                     
-                    {/* Action button on hover */}
                     <div className="absolute -bottom-10 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
                         <button onClick={(e) => { e.stopPropagation(); onDelete(book); }} className="p-1.5 bg-[#a63c3c] text-[#f4ebd8] rounded-full shadow-md border border-[#5e2323] hover:bg-[#7a2e2e]"><Trash2 size={12}/></button>
                     </div>
@@ -614,13 +626,12 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
   );
 };
 
-
 // --- Main Application ---
 export default function App() {
-  const [fb, setFb] = useState(null); // 動態載入的 Firebase 實體
+  const [fb, setFb] = useState(null);
   const [user, setUser] = useState(null);
   const [isAuthLoading, setIsAuthLoading] = useState(true);
-  const [isLoggedIn, setIsLoggedIn] = useState(false); // Local App Password state
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   
   const [books, setBooks] = useState([]);
@@ -629,12 +640,10 @@ export default function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [theme, setTheme] = useState('dark');
   
-  // Modals state
   const [isBookModalOpen, setIsBookModalOpen] = useState(false);
   const [editingBook, setEditingBook] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
-  // Initialize Auth & Theme
   useEffect(() => {
     const savedTheme = localStorage.getItem('theme') || 'dark';
     setTheme(savedTheme);
@@ -672,14 +681,13 @@ export default function App() {
         });
       } catch (err) {
         console.error("Firebase Init Error:", err);
-        setIsAuthLoading(false); // 若無網路或載入失敗則 fallback，避免畫面卡死
+        setIsAuthLoading(false); 
       }
     };
 
     if (window.firebase) {
       initFirebase();
     } else {
-      // 透過插入 HTML Script 標籤的方式動態載入相容版 Firebase，徹底避開所有 Vite 編譯限制
       const loadScript = (src) => new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = src;
@@ -703,7 +711,6 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // Fetch Data
   useEffect(() => {
     if (!user || !isLoggedIn || !fb) return;
     
@@ -720,9 +727,7 @@ export default function App() {
       setIsDataLoading(false);
     });
 
-    return () => {
-      unsubscribeBooks();
-    };
+    return () => unsubscribeBooks();
   }, [user, isLoggedIn, fb]);
 
   const handleLogin = (e) => {
@@ -748,18 +753,14 @@ export default function App() {
     setIsLoggedIn(false);
   };
 
-  // CRUD Operations
   const handleSaveBook = async (bookData) => {
     if (!user || !fb) return;
     const { db } = fb;
     try {
       if (editingBook) {
-        // Update
         const bookRef = db.collection(getCollectionPath(user.uid, 'books')).doc(editingBook.id);
         await bookRef.update(bookData);
       } else {
-        // Create
-        // Duplicate check
         const isDuplicate = books.some(b => 
           (bookData.isbn && b.isbn === bookData.isbn) || 
           (b.title.toLowerCase() === bookData.title.toLowerCase())
@@ -790,7 +791,6 @@ export default function App() {
     }
   };
 
-  // --- Initial Loading Screen ---
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#1a120c] flex flex-col items-center justify-center text-[#e8dcc7] font-serif">
@@ -803,7 +803,6 @@ export default function App() {
     );
   }
 
-  // --- Login Screen ---
   if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-cover bg-center flex items-center justify-center p-4 relative font-serif" style={{ backgroundImage: 'url(https://images.unsplash.com/photo-1481627834876-b7833e8f5570?ixlib=rb-1.2.1&auto=format&fit=crop&w=2000&q=80)' }}>
@@ -831,7 +830,6 @@ export default function App() {
     );
   }
 
-  // --- Main App Shell ---
   const navItems = [
     { id: 'dashboard', label: '藏書統計', icon: PieChartIcon },
     { id: 'books', label: '典藏書櫃', icon: Library },
@@ -841,13 +839,11 @@ export default function App() {
   return (
     <ToastProvider>
       <div className="min-h-screen bg-[#f4ebd8] dark:bg-[#1a120c] text-[#4a2e16] dark:text-[#d2c3a5] font-serif transition-colors duration-300 flex overflow-hidden selection:bg-[#8b5a2b]/30 relative">
-        {/* Background Texture/Vignette */}
         <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
            <div className="absolute inset-0 opacity-[0.03] dark:opacity-10 mix-blend-multiply dark:mix-blend-overlay bg-[url('https://www.transparenttextures.com/patterns/cream-paper.png')]"></div>
            <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(62,39,35,0.1)_100%)] dark:bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.7)_100%)]"></div>
         </div>
 
-        {/* Sidebar */}
         <aside className={`fixed inset-y-0 left-0 z-40 w-64 bg-[#e6d5b8] dark:bg-[#2c1f16] shadow-[4px_0_15px_rgba(0,0,0,0.1)] dark:shadow-[4px_0_20px_rgba(0,0,0,0.5)] border-r-2 border-[#d2c3a5] dark:border-[#1e150e] transform transition-transform duration-300 ease-in-out ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 flex flex-col relative`}>
           <div className="absolute inset-0 opacity-[0.03] dark:opacity-[0.02] pointer-events-none bg-[url('https://www.transparenttextures.com/patterns/wood-pattern.png')]"></div>
           
@@ -881,14 +877,11 @@ export default function App() {
           </div>
         </aside>
 
-        {/* Mobile Overlay */}
         {isSidebarOpen && (
           <div className="fixed inset-0 bg-[#1a120c]/60 backdrop-blur-sm z-30 md:hidden" onClick={() => setIsSidebarOpen(false)} />
         )}
 
-        {/* Main Content Area */}
         <main className="flex-1 flex flex-col min-w-0 md:ml-64 relative z-10 h-screen overflow-hidden">
-          {/* Topbar */}
           <header className="h-16 flex items-center justify-between px-4 sm:px-8 border-b border-[#d2c3a5] dark:border-[#4a3525] bg-[#fdfbf7]/80 dark:bg-[#1a120c]/80 backdrop-blur-md sticky top-0 z-20">
              <button className="p-2 -ml-2 rounded-sm text-[#7a5a41] hover:bg-[#e6d5b8] dark:hover:bg-[#2c1f16] md:hidden" onClick={() => setIsSidebarOpen(true)}>
                <Menu size={24} />
@@ -901,7 +894,6 @@ export default function App() {
              </button>
           </header>
 
-          {/* Content Scroll Area */}
           <div className="flex-1 overflow-auto p-4 sm:p-8 custom-scrollbar relative">
              <div className="max-w-7xl mx-auto h-full relative z-10">
                 {activeTab === 'dashboard' && <DashboardView books={books} />}
@@ -941,7 +933,6 @@ export default function App() {
           </div>
         </main>
 
-        {/* Modals */}
         <Modal 
           isOpen={isBookModalOpen} 
           onClose={() => setIsBookModalOpen(false)} 
@@ -949,7 +940,6 @@ export default function App() {
           maxWidth="max-w-4xl"
         >
           <BookForm 
-            userId={user?.uid}
             initialData={editingBook} 
             onSave={handleSaveBook} 
             onCancel={() => setIsBookModalOpen(false)} 
@@ -977,7 +967,6 @@ export default function App() {
         
       </div>
       
-      {/* Global Styles for Animations and Scrollbar */}
       <style dangerouslySetInnerHTML={{__html: `
         .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
