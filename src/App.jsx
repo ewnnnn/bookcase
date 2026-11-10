@@ -3,14 +3,22 @@ import {
   Book, BookOpen, Library, Settings as SettingsIcon, LogOut, Search, Plus, Trash2,
   Camera, PieChart as PieChartIcon, BarChart3, Menu, X,
   CheckCircle, AlertCircle, TrendingUp, DollarSign, Image as ImageIcon,
-  Moon, Sun, QrCode, XCircle
+  Moon, Sun, QrCode, XCircle, Folder, Move
 } from 'lucide-react';
 import {
   PieChart, Pie, Cell, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
 
-// --- 動態載入 Tailwind CSS 與字型 (解決沒有 CSS 檔案的問題) ---
+// --- 動態載入 Tailwind CSS 與字型 (包含 Viewport 設定) ---
 if (typeof document !== 'undefined') {
+  // 補上手幾版 Viewport，解決比例縮小問題
+  if (!document.querySelector('meta[name="viewport"]')) {
+    const meta = document.createElement('meta');
+    meta.name = 'viewport';
+    meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no';
+    document.head.appendChild(meta);
+  }
+
   // 1. 先設定 Tailwind Config，避免 race condition
   window.tailwind = window.tailwind || {};
   window.tailwind.config = {
@@ -248,7 +256,7 @@ const ISBNScanner = ({ onScanSuccess, onClose }) => {
 const BookForm = ({ initialData, onSave, onCancel }) => {
   const showToast = useToast();
   const [formData, setFormData] = useState(initialData || {
-    title: '', author: '', isbn: '', category: '', location: '',
+    title: '', author: '', isbn: '', category: '', location: '', series: '', // 加入 series 系列欄位
     price: '', pageCount: '', status: 'unread', notes: '', coverUrl: '',
     purchaseDate: new Date().toISOString().split('T')[0]
   });
@@ -279,20 +287,55 @@ const BookForm = ({ initialData, onSave, onCancel }) => {
       return;
     }
     setIsSearching(true);
+    
     try {
-      const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbnToSearch}`);
-      const data = await res.json();
-      if (data.items && data.items.length > 0) {
-        const info = data.items[0].volumeInfo;
+      let bookData = null;
+      let coverUrl = null;
+
+      // 1. 先查 Google Books
+      const gbRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${isbnToSearch}`);
+      const gbData = await gbRes.json();
+      
+      if (gbData.items && gbData.items.length > 0) {
+        bookData = gbData.items[0].volumeInfo;
+        coverUrl = bookData.imageLinks?.thumbnail?.replace('http:', 'https:');
+      }
+
+      // 2. 如果沒有圖片，強制查 Open Library 圖片庫
+      if (!coverUrl) {
+         coverUrl = `https://covers.openlibrary.org/b/isbn/${isbnToSearch}-M.jpg?default=false`;
+         try {
+            const checkImg = await fetch(coverUrl, { method: 'HEAD' });
+            if (!checkImg.ok) coverUrl = null;
+         } catch {
+            coverUrl = null;
+         }
+      }
+
+      // 3. 如果連書本都沒找到，再查 Open Library 文本資料庫
+      if (!bookData) {
+         const olRes = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${isbnToSearch}&format=json&jscmd=data`);
+         const olData = await olRes.json();
+         const olBook = olData[`ISBN:${isbnToSearch}`];
+         if (olBook) {
+            bookData = {
+               title: olBook.title,
+               authors: olBook.authors?.map(a => a.name),
+               pageCount: olBook.number_of_pages
+            };
+         }
+      }
+
+      if (bookData) {
         setFormData(prev => ({
           ...prev,
-          title: info.title || prev.title,
-          author: info.authors ? info.authors.join(', ') : prev.author,
-          pageCount: info.pageCount || prev.pageCount,
-          coverUrl: info.imageLinks?.thumbnail?.replace('http:', 'https:') || prev.coverUrl,
+          title: bookData.title || prev.title,
+          author: bookData.authors ? bookData.authors.join(', ') : prev.author,
+          pageCount: bookData.pageCount || prev.pageCount,
+          coverUrl: coverUrl || prev.coverUrl,
           isbn: isbnToSearch
         }));
-        showToast('已自動帶入書籍資訊');
+        showToast('已成功帶入書籍與封面資訊！');
       } else {
         showToast('查無此書籍資訊，請改為手動輸入', 'error');
       }
@@ -313,7 +356,11 @@ const BookForm = ({ initialData, onSave, onCancel }) => {
       cleanedData.price = Number(cleanedData.price) || 0;
       cleanedData.pageCount = Number(cleanedData.pageCount) || 0;
       cleanedData.updatedAt = new Date().toISOString();
-      if (!initialData) cleanedData.createdAt = new Date().toISOString();
+      
+      if (!initialData) {
+         cleanedData.createdAt = new Date().toISOString();
+         cleanedData.sortOrder = Date.now(); // 新增書籍時設定預設排序值
+      }
       onSave(cleanedData);
     }
   };
@@ -371,7 +418,10 @@ const BookForm = ({ initialData, onSave, onCancel }) => {
             <Input label="書名 *" name="title" value={formData.title} onChange={handleChange} error={errors.title} placeholder="請輸入書名" />
           </div>
           <Input label="作者" name="author" value={formData.author} onChange={handleChange} placeholder="作者名稱" />
-          <Input label="購買日期" type="date" name="purchaseDate" value={formData.purchaseDate} onChange={handleChange} />
+          
+          {/* 加入系列分類欄位 */}
+          <Input label="系列名稱 (資料夾)" name="series" value={formData.series || ''} onChange={handleChange} placeholder="例如：哈利波特系列" icon={Folder} />
+          
           <Select 
             label="書籍分類 *" 
             name="category" 
@@ -387,6 +437,7 @@ const BookForm = ({ initialData, onSave, onCancel }) => {
               { value: 'other', label: '其他' }
             ]}
           />
+          <Input label="購買日期" type="date" name="purchaseDate" value={formData.purchaseDate} onChange={handleChange} />
           <Select 
             label="閱讀狀態" 
             name="status" 
@@ -524,9 +575,13 @@ const DashboardView = ({ books }) => {
   );
 };
 
-const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
+// 支援資料夾分組與拖曳排序的 BookListView
+const BookListView = ({ books, onAdd, onEdit, onDelete, onSwapOrder, isLoading }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [isGroupMode, setIsGroupMode] = useState(false); // 控制是否為系列分組模式
+  const [isManualSort, setIsManualSort] = useState(false); // 控制是否為拖曳排序模式
+  const [draggedId, setDraggedId] = useState(null);
 
   const filteredBooks = useMemo(() => {
     return books.filter(b => {
@@ -535,8 +590,33 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
                           (b.isbn && b.isbn.includes(searchTerm));
       const matchStatus = statusFilter === 'all' || b.status === statusFilter;
       return matchSearch && matchStatus;
-    }).sort((a, b) => new Date(b.purchaseDate || b.createdAt) - new Date(a.purchaseDate || a.createdAt));
-  }, [books, searchTerm, statusFilter]);
+    }).sort((a, b) => {
+      // 若進入手動排序模式，依 sortOrder 排序；否則依購買日期或加入日期排序
+      if (isManualSort) {
+         const orderA = a.sortOrder || new Date(a.createdAt).getTime();
+         const orderB = b.sortOrder || new Date(b.createdAt).getTime();
+         return orderB - orderA; 
+      }
+      return new Date(b.purchaseDate || b.createdAt) - new Date(a.purchaseDate || a.createdAt);
+    });
+  }, [books, searchTerm, statusFilter, isManualSort]);
+
+  // 如果開啟分組模式，將書籍以系列 (series) 進行整理
+  const groupedBooks = useMemo(() => {
+    if (!isGroupMode) return { 'all': filteredBooks };
+    
+    const groups = { '未分類': [] };
+    filteredBooks.forEach(book => {
+       const seriesName = book.series?.trim();
+       if (seriesName) {
+          if (!groups[seriesName]) groups[seriesName] = [];
+          groups[seriesName].push(book);
+       } else {
+          groups['未分類'].push(book);
+       }
+    });
+    return groups;
+  }, [filteredBooks, isGroupMode]);
 
   const statusColors = {
     unread: 'bg-[#b38b4d]', 
@@ -545,23 +625,100 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
     wishlist: 'bg-[#3d4c53]' 
   };
 
+  const handleDragStart = (e, id) => {
+     setDraggedId(id);
+     e.dataTransfer.effectAllowed = 'move';
+     e.dataTransfer.setDragImage(new Image(), 0, 0); 
+  };
+
+  const handleDragOver = (e) => {
+     e.preventDefault(); 
+     e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e, targetId) => {
+     e.preventDefault();
+     if (!draggedId || draggedId === targetId) return;
+     onSwapOrder(draggedId, targetId);
+     setDraggedId(null);
+  };
+
+  const renderBookGrid = (bookArray) => (
+    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-6 gap-y-32 pb-40 pt-12 relative z-10">
+      {bookArray.map(book => (
+        <div 
+           key={book.id} 
+           className={`relative flex flex-col items-center group cursor-pointer ${draggedId === book.id ? 'opacity-40' : ''}`}
+           draggable={isManualSort}
+           onDragStart={(e) => handleDragStart(e, book.id)}
+           onDragOver={handleDragOver}
+           onDrop={(e) => handleDrop(e, book.id)}
+           onClick={() => !isManualSort && onEdit(book)}
+        >
+          <div className="absolute bottom-0 w-[130%] h-5 bg-gradient-to-b from-[#905e32] to-[#5c3a21] shadow-[0_15px_15px_-3px_rgba(0,0,0,0.6)] border-t border-[#c28c5a] border-b-[3px] border-[#3e2723] z-0 translate-y-full rounded-sm flex justify-between px-3">
+             <div className="w-1.5 h-1.5 rounded-full bg-[#2a1a11] mt-1 shadow-sm"></div>
+             <div className="w-1.5 h-1.5 rounded-full bg-[#2a1a11] mt-1 shadow-sm"></div>
+          </div>
+
+          <div className={`z-10 relative w-24 h-36 sm:w-28 sm:h-44 shadow-[8px_0_15px_rgba(0,0,0,0.5)] transition-all duration-500 group-hover:-translate-y-4 group-hover:rotate-2 group-hover:shadow-[12px_15px_20px_rgba(0,0,0,0.4)] bg-gradient-to-r from-[#3e2723] to-[#5c3a21] rounded-r-md rounded-l-sm border-l-[3px] border-white/20 flex items-center justify-center overflow-hidden ${isManualSort ? 'ring-2 ring-[#7a2e2e] ring-offset-2 ring-offset-[#fdfbf7] dark:ring-offset-[#1a120c] animate-pulse' : ''}`}>
+            {book.coverUrl ? (
+              <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
+            ) : (
+              <div className="p-1 w-full h-full border border-[#8b5a2b] m-1 rounded-sm flex items-center justify-center relative overflow-hidden">
+                <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/leather.png')]"></div>
+                <h4 className="font-serif text-[#f4ebd8] text-[10px] sm:text-xs font-bold tracking-widest line-clamp-4 leading-loose z-10 drop-shadow-md" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>{book.title}</h4>
+              </div>
+            )}
+            <div className={`absolute -top-0.5 right-2 w-3.5 h-6 ${statusColors[book.status]} shadow-md border border-black/30 z-20`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%)' }}></div>
+            
+            {/* 拖曳模式時顯示移動圖示 */}
+            {isManualSort && (
+               <div className="absolute inset-0 bg-black/40 flex items-center justify-center z-30 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Move className="text-white drop-shadow-md" size={32} />
+               </div>
+            )}
+          </div>
+
+          <div className="absolute top-[calc(100%+28px)] z-20 w-[95%] bg-[#fdfbf7] dark:bg-[#2c1f16] border border-[#d2c3a5] dark:border-[#543d2d] p-1.5 text-center shadow-lg flex flex-col items-center gap-0.5 group-hover:bg-[#fff] dark:group-hover:bg-[#382619] transition-colors rounded-sm">
+              <div className="w-1.5 h-1.5 rounded-full bg-[#3e2723] absolute -top-1 shadow-inner border border-[#1a120c]"></div>
+              <h3 className="font-serif font-bold text-[#4a2e16] dark:text-[#d2c3a5] text-[11px] line-clamp-1 w-full mt-0.5" title={book.title}>{book.title}</h3>
+              <p className="text-[9px] text-[#7a5a41] dark:text-[#a89078] truncate w-full">{book.author || '未知作者'}</p>
+              
+              {!isManualSort && (
+                <div className="absolute -bottom-10 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
+                    <button onClick={(e) => { e.stopPropagation(); onDelete(book); }} className="p-1.5 bg-[#a63c3c] text-[#f4ebd8] rounded-full shadow-md border border-[#5e2323] hover:bg-[#7a2e2e]"><Trash2 size={12}/></button>
+                </div>
+              )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
   return (
     <div className="flex flex-col gap-6 animate-fade-in h-full font-serif">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-[#d2c3a5] dark:border-[#4a3525] pb-4">
         <h2 className="text-2xl font-bold text-[#4a2e16] dark:text-[#e8dcc7] flex items-center gap-2">
           <Library className="text-[#8b5a2b]" /> 典藏書櫃
         </h2>
-        <Button onClick={onAdd} icon={Plus}>登錄新書</Button>
+        <div className="flex gap-3">
+           {/* 新增：手動排序按鈕 */}
+           <Button onClick={() => setIsManualSort(!isManualSort)} variant={isManualSort ? "primary" : "secondary"} icon={Move}>
+              {isManualSort ? "完成排序" : "手動排序"}
+           </Button>
+           <Button onClick={onAdd} icon={Plus}>登錄新書</Button>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-4 items-center bg-[#fdfbf7] dark:bg-[#2c1f16] p-4 border border-[#d2c3a5] dark:border-[#4a3525] shadow-sm rounded-sm z-20">
-        <div className="w-full sm:w-1/2">
-           <Input placeholder="搜尋書名、作者、ISBN..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} icon={Search} />
+        <div className="w-full sm:w-1/3">
+           <Input placeholder="搜尋書名、作者、ISBN..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} icon={Search} disabled={isManualSort} />
         </div>
         <div className="w-full sm:w-1/4">
           <Select 
             value={statusFilter} 
             onChange={(e) => setStatusFilter(e.target.value)}
+            disabled={isManualSort}
             options={[
               { value: 'all', label: '所有狀態' },
               { value: 'unread', label: '未讀' },
@@ -570,6 +727,16 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
               { value: 'wishlist', label: '願望清單' }
             ]}
           />
+        </div>
+        <div className="flex-1 flex justify-end">
+           {/* 新增：系列分組展示切換 */}
+           <label className="flex items-center gap-2 cursor-pointer group">
+              <input type="checkbox" className="hidden" checked={isGroupMode} onChange={() => setIsGroupMode(!isGroupMode)} disabled={isManualSort} />
+              <div className={`flex items-center gap-2 px-4 py-2 rounded-sm border transition-all ${isGroupMode ? 'bg-[#7a5a41] text-[#f4ebd8] border-[#4a3525]' : 'bg-transparent text-[#7a5a41] dark:text-[#a89078] border-[#c8b89e] dark:border-[#543d2d] group-hover:bg-[#e6d5b8] dark:group-hover:bg-[#382619]'}`}>
+                 <Folder size={18} />
+                 <span className="font-bold text-sm">依系列分組展示</span>
+              </div>
+           </label>
         </div>
       </div>
 
@@ -583,38 +750,23 @@ const BookListView = ({ books, onAdd, onEdit, onDelete, isLoading }) => {
               ))}
            </div>
         ) : filteredBooks.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-x-6 gap-y-32 pb-40 pt-12 mt-4 relative z-10">
-            {filteredBooks.map(book => (
-              <div key={book.id} className="relative flex flex-col items-center group cursor-pointer" onClick={() => onEdit(book)}>
-                <div className="absolute bottom-0 w-[130%] h-5 bg-gradient-to-b from-[#905e32] to-[#5c3a21] shadow-[0_15px_15px_-3px_rgba(0,0,0,0.6)] border-t border-[#c28c5a] border-b-[3px] border-[#3e2723] z-0 translate-y-full rounded-sm flex justify-between px-3">
-                   <div className="w-1.5 h-1.5 rounded-full bg-[#2a1a11] mt-1 shadow-sm"></div>
-                   <div className="w-1.5 h-1.5 rounded-full bg-[#2a1a11] mt-1 shadow-sm"></div>
-                </div>
-
-                <div className="z-10 relative w-24 h-36 sm:w-28 sm:h-44 shadow-[8px_0_15px_rgba(0,0,0,0.5)] transition-all duration-500 group-hover:-translate-y-4 group-hover:rotate-2 group-hover:shadow-[12px_15px_20px_rgba(0,0,0,0.4)] bg-gradient-to-r from-[#3e2723] to-[#5c3a21] rounded-r-md rounded-l-sm border-l-[3px] border-white/20 flex items-center justify-center overflow-hidden">
-                  {book.coverUrl ? (
-                    <img src={book.coverUrl} alt={book.title} className="w-full h-full object-cover" />
-                  ) : (
-                    <div className="p-1 w-full h-full border border-[#8b5a2b] m-1 rounded-sm flex items-center justify-center relative overflow-hidden">
-                      <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/leather.png')]"></div>
-                      <h4 className="font-serif text-[#f4ebd8] text-[10px] sm:text-xs font-bold tracking-widest line-clamp-4 leading-loose z-10 drop-shadow-md" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}>{book.title}</h4>
+           <div className="mt-4">
+              {Object.entries(groupedBooks).map(([groupName, groupArray]) => {
+                 if (groupArray.length === 0) return null;
+                 return (
+                    <div key={groupName} className="mb-16">
+                       {isGroupMode && (
+                          <h3 className="text-lg font-bold text-[#5c3a21] dark:text-[#d2c3a5] mb-6 flex items-center gap-2 border-b-2 border-dashed border-[#c8b89e] dark:border-[#4a3525] pb-2 relative z-10">
+                             <Folder className="text-[#8b5a2b]" size={20} />
+                             {groupName}
+                             <span className="text-sm font-normal text-[#7a5a41] dark:text-[#a89078]">({groupArray.length} 本)</span>
+                          </h3>
+                       )}
+                       {renderBookGrid(groupArray)}
                     </div>
-                  )}
-                  <div className={`absolute -top-0.5 right-2 w-3.5 h-6 ${statusColors[book.status]} shadow-md border border-black/30 z-20`} style={{ clipPath: 'polygon(0 0, 100% 0, 100% 100%, 50% 75%, 0 100%)' }}></div>
-                </div>
-
-                <div className="absolute top-[calc(100%+28px)] z-20 w-[95%] bg-[#fdfbf7] dark:bg-[#2c1f16] border border-[#d2c3a5] dark:border-[#543d2d] p-1.5 text-center shadow-lg flex flex-col items-center gap-0.5 group-hover:bg-[#fff] dark:group-hover:bg-[#382619] transition-colors rounded-sm">
-                    <div className="w-1.5 h-1.5 rounded-full bg-[#3e2723] absolute -top-1 shadow-inner border border-[#1a120c]"></div>
-                    <h3 className="font-serif font-bold text-[#4a2e16] dark:text-[#d2c3a5] text-[11px] line-clamp-1 w-full mt-0.5" title={book.title}>{book.title}</h3>
-                    <p className="text-[9px] text-[#7a5a41] dark:text-[#a89078] truncate w-full">{book.author || '未知作者'}</p>
-                    
-                    <div className="absolute -bottom-10 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity duration-300">
-                        <button onClick={(e) => { e.stopPropagation(); onDelete(book); }} className="p-1.5 bg-[#a63c3c] text-[#f4ebd8] rounded-full shadow-md border border-[#5e2323] hover:bg-[#7a2e2e]"><Trash2 size={12}/></button>
-                    </div>
-                </div>
-              </div>
-            ))}
-          </div>
+                 )
+              })}
+           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-64 text-[#a89078] gap-4 relative z-10">
             <Book size={48} className="opacity-50" />
@@ -791,6 +943,29 @@ export default function App() {
     }
   };
 
+  // 新增：處理拖曳交換排序的邏輯
+  const handleSwapOrder = async (draggedId, targetId) => {
+     if (!user || !fb) return;
+     const { db } = fb;
+
+     const draggedBook = books.find(b => b.id === draggedId);
+     const targetBook = books.find(b => b.id === targetId);
+     if (!draggedBook || !targetBook) return;
+
+     // 取得兩者的排序值 (若無則自動由創建時間產生)
+     const draggedOrder = draggedBook.sortOrder ?? new Date(draggedBook.createdAt).getTime();
+     const targetOrder = targetBook.sortOrder ?? new Date(targetBook.createdAt).getTime();
+
+     try {
+        const batch = db.batch();
+        batch.update(db.collection(getCollectionPath(user.uid, 'books')).doc(draggedId), { sortOrder: targetOrder });
+        batch.update(db.collection(getCollectionPath(user.uid, 'books')).doc(targetId), { sortOrder: draggedOrder });
+        await batch.commit();
+     } catch (err) {
+        console.error("Swap order error:", err);
+     }
+  };
+
   if (isAuthLoading) {
     return (
       <div className="min-h-screen bg-[#1a120c] flex flex-col items-center justify-center text-[#e8dcc7] font-serif">
@@ -905,6 +1080,7 @@ export default function App() {
                     onAdd={() => { setEditingBook(null); setIsBookModalOpen(true); }}
                     onEdit={(book) => { setEditingBook(book); setIsBookModalOpen(true); }}
                     onDelete={(book) => setDeleteConfirm(book)}
+                    onSwapOrder={handleSwapOrder}
                   />
                 )}
                 
